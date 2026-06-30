@@ -1,1 +1,56 @@
-<thml><body><p>Test File</p></body></html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>端末チェックアプリ</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin: 20px; }
+        #reader { width: 100%; max-width: 500px; margin: 0 auto; }
+        #result { margin-top: 20px; font-weight: bold; font-size: 1.2rem; color: green; }
+    </style>
+</head>
+<body>
+
+    <h1>端末チェック用スキャナー</h1>
+    <div id="reader"></div>
+    <div id="result"></div>
+
+    <script>
+        const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScoqBmjrIcKwnfYjBYeio6tyoCKkdm7gQD_qT_oa0TQ55bhlA/formResponse";
+        const ENTRY_ID = "entry.860082584";
+
+        function onScanSuccess(decodedText, decodedResult) {
+            // スキャン成功時に実行（連続送信を防ぐため一度ストップするのが理想）
+            document.getElementById('result').innerText = `スキャン中: ${decodedText}`;
+            
+            // フォームデータの準備
+            const formData = new FormData();
+            formData.append(ENTRY_ID, decodedText);
+
+            // Googleフォームへ送信 (CORSエラーが出ますが、送信自体は成否に関わらず到達します)
+            fetch(FORM_URL, {
+                method: "POST",
+                body: formData,
+                mode: "no-cors"
+            }).then(() => {
+                document.getElementById('result').innerText = `送信完了: 端末番号 ${decodedText}`;
+                alert(`端末番号: ${decodedText} を送信しました。`);
+            }).catch(err => {
+                console.error(err);
+                document.getElementById('result').innerText = "送信エラーが発生しました。";
+            });
+        }
+
+        function onScanFailure(error) {
+            // スキャン失敗時は何もしない（ログが膨大になるため通常は無視）
+        }
+
+        // カメラの起動設定
+        let html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+    </script>
+</body>
+</html>
