@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>端末チェック用アプリ（カメラ切り替え修正版）</title>
+  <title>端末チェック用アプリ（カメラ強制切り替え版）</title>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     body { font-family: sans-serif; text-align: center; margin: 20px; background-color: #f4f6f7; color: #2c3e50; }
@@ -32,7 +32,7 @@
     <h2>📱 端末チェック（連続スキャン）</h2>
     
     <div id="video-container">
-      <button id="camera-switch-btn" title="カメラの向きを切り替え">🔄</button>
+      <button id="camera-switch-btn" title="カメラを切り替え">🔄</button>
       <video id="video" autoplay playsinline muted></video>
     </div>
 
@@ -59,56 +59,103 @@
     
     let isScanning = false;
     let lastScannedId = "";
-    let currentFacingMode = "environment"; 
+    
+    let videoDevices = [];      // 利用可能なカメラリスト
+    let currentDeviceIndex = 0; // 現在使用中のカメラのインデックス
     let currentStream = null;
 
-    window.onload = () => { 
-      const savedCamera = localStorage.getItem('checkAppCameraFacing');
-      if (savedCamera) {
-        currentFacingMode = savedCamera;
-      }
-      startCamera(currentFacingMode); 
+    window.onload = async () => { 
+      await initCameraSystem();
     };
 
-    // カメラ起動処理を async/await で確実化
-    async function startCamera(facingMode) {
-      // 1. 既存ストリームの完全停止
+    // 初期化：カメラのパーミッションを取得してデバイスリストを作る
+    async function initCameraSystem() {
+      try {
+        // 最初はデフォルトで一度カメラを取得（これをしないとデバイス名やIDが空になる）
+        const initStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        initStream.getTracks().forEach(track => track.stop()); // 一度すぐ止める
+
+        // 利用可能な入力デバイスを列挙
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+        if (videoDevices.length === 0) {
+          updateStatus("❌ カメラが見つかりません。", "red");
+          return;
+        }
+
+        // 記憶されているデバイスIDがあればそれを選択、なければ0番目
+        const savedDeviceId = localStorage.getItem('checkAppCameraDeviceId');
+        const foundIndex = videoDevices.findIndex(d => d.deviceId === savedDeviceId);
+        currentDeviceIndex = (foundIndex !== -1) ? foundIndex : 0;
+
+        // もしカメラが1つしかなければ切り替えボタンを非表示にする
+        if (videoDevices.length <= 1) {
+          cameraSwitchBtn.style.display = "none";
+        }
+
+        await startCamera(videoDevices[currentDeviceIndex].deviceId);
+
+      } catch (err) {
+        console.error(err);
+        updateStatus("❌ カメラアクセス権限を許可してください。", "red");
+      }
+    }
+
+    // デバイスIDを直接指定してカメラを起動する
+    async function startCamera(deviceId) {
       if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
         currentStream = null;
         video.srcObject = null;
-        // デバイスの解放待ちとして100ms休憩を入れる（重要）
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 150)); // デバイス解放までしっかり待つ
       }
 
-      // 2. 新しいカメラの要求（ideal制約を使用）
       const constraints = {
-        video: { facingMode: { ideal: facingMode } },
+        video: { 
+          deviceId: { exact: deviceId } 
+        },
         audio: false
       };
 
-      navigator.mediaDevices.getUserMedia(constraints)
-      .then(stream => { 
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         currentStream = stream;
-        video.srcObject = stream; 
+        video.srcObject = stream;
         if(!isScanning) {
           updateStatus("【待機中】\n「スキャン開始」を押してください。", "#3498db");
         }
-      })
-      .catch(err => { 
+      } catch (err) {
         console.error(err);
-        updateStatus("❌ カメラ起動エラー: 再度お試しください。", "red"); 
-      });
+        // 万が一ID指定でエラーが出たら、制約を緩めて再起動
+        fallbackCamera();
+      }
     }
 
-    // 切り替えボタンのイベント
+    async function fallbackCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        currentStream = stream;
+        video.srcObject = stream;
+      } catch(e) {
+        updateStatus("❌ カメラ起動エラー", "red");
+      }
+    }
+
+    // 🔄 ボタンを押したら、リストの次のカメラIDへ強制移行
     cameraSwitchBtn.addEventListener('click', async () => {
-      currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
-      localStorage.setItem('checkAppCameraFacing', currentFacingMode);
-      
-      // ボタンを一瞬無効化して連打を防ぐ
+      if (videoDevices.length <= 1) return;
+
       cameraSwitchBtn.disabled = true;
-      await startCamera(currentFacingMode);
+      
+      // 次のカメラインデックスへループ移動
+      currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+      const nextDeviceId = videoDevices[currentDeviceIndex].deviceId;
+      
+      localStorage.setItem('checkAppCameraDeviceId', nextDeviceId);
+      
+      await startCamera(nextDeviceId);
+      
       cameraSwitchBtn.disabled = false;
     });
 
@@ -154,13 +201,7 @@
 
         if (code) {
           const scannedText = code.data.trim();
-          
-          if (scannedText === "") {
-            requestAnimationFrame(tick);
-            return;
-          }
-
-          if (scannedText === lastScannedId) {
+          if (scannedText === "" || scannedText === lastScannedId) {
             requestAnimationFrame(tick);
             return;
           }
