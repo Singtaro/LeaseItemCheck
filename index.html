@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>端末チェック用アプリ（独立版）</title>
+  <title>端末チェック用アプリ（連続スキャン版）</title>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     body { font-family: sans-serif; text-align: center; margin: 20px; background-color: #f4f6f7; color: #2c3e50; }
@@ -11,27 +11,33 @@
     #video-container { position: relative; width: 100%; max-width: 400px; margin: 0 auto; background: #000; border-radius: 6px; overflow: hidden; aspect-ratio: 4/3; }
     video { width: 100%; height: 100%; object-fit: cover; }
     #status { margin-top: 15px; padding: 12px; font-weight: bold; border-left: 5px solid #3498db; background: #e8f4f8; text-align: left; white-space: pre-line; }
-    .btn { display: block; width: 100%; max-width: 200px; margin: 15px auto 0; padding: 12px; font-size: 16px; font-weight: bold; color: white; background-color: #3498db; border: none; border-radius: 4px; cursor: pointer; }
-    .btn:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 10px; justify-content: center; margin-top: 15px; }
+    .btn { flex: 1; max-width: 180px; padding: 12px; font-size: 15px; font-weight: bold; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #action-btn { background-color: #3498db; }
+    #action-btn.scanning { background-color: #e67e22; }
+    #cancel-btn { background-color: #e74c3c; display: none; }
   </style>
 </head>
 <body>
 
   <div class="container">
-    <h2>📱 端末チェック用スキャナー</h2>
+    <h2>📱 端末チェック（連続スキャン）</h2>
     
     <div id="video-container">
       <video id="video" autoplay playsinline muted></video>
     </div>
 
-    <div id="status">ボタンを押してスキャンを開始してください</div>
-    <button id="action-btn" class="btn">🔍 スキャン開始</button>
+    <div id="status">「スキャン開始」を押してください。</div>
+    
+    <div class="btn-group">
+      <button id="action-btn" class="btn">🔍 スキャン開始</button>
+      <button id="cancel-btn" class="btn">🛑 一時停止</button>
+    </div>
   </div>
 
   <canvas id="canvas" style="display:none;"></canvas>
 
   <script>
-    // 今回のシステム専用のGoogleフォームURLとEntryID（事前入力URLで確認された正しいもの）
     const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScoqBmjrIcKwnfYjBYeio6tyoCKkdm7gQD_qT_oa0TQ55bhlA/formResponse";
     const ENTRY_ID = "entry.860082584";
 
@@ -39,33 +45,39 @@
     const canvas = document.getElementById('canvas');
     const statusDiv = document.getElementById('status');
     const actionBtn = document.getElementById('action-btn');
+    const cancelBtn = document.getElementById('cancel-btn');
     
     let isScanning = false;
-    let currentStream = null;
+    let lastScannedId = ""; // 直前に読み取ったIDを記録する変数
 
-    // ページ読み込み時にカメラを起動
-    window.onload = () => {
-      startCamera();
-    };
+    window.onload = () => { startCamera(); };
 
     function startCamera() {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
-      .then(stream => {
-        currentStream = stream;
-        video.srcObject = stream;
-        updateStatus("【待機中】\n下のボタンを押してスキャンを開始してください。", "#3498db");
-      })
-      .catch(err => {
-        updateStatus("❌ カメラエラー: アクセス権限を許可してください。", "red");
-      });
+      .then(stream => { video.srcObject = stream; })
+      .catch(err => { updateStatus("❌ カメラエラー: 権限を許可してください。", "red"); });
     }
 
     actionBtn.addEventListener('click', () => {
       if (isScanning) return;
       isScanning = true;
+      lastScannedId = ""; // スキャン開始時に前回の記憶をクリア
       actionBtn.disabled = true;
-      updateStatus("【スキャン中】\n端末のQRコードをカメラにかざしてください。", "#e67e22");
+      actionBtn.innerText = "📡 スキャン作動中";
+      actionBtn.classList.add("scanning");
+      cancelBtn.style.display = "block";
+      updateStatus("【連続スキャン中】\n端末のQRコードを次々にかざしてください。\n（同じ番号は連続して読み込めません）", "#e67e22");
       tick();
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      isScanning = false;
+      actionBtn.disabled = false;
+      actionBtn.innerText = "🔍 スキャン開始";
+      actionBtn.classList.remove("scanning");
+      cancelBtn.style.display = "none";
+      lastScannedId = "";
+      updateStatus("【停止中】\nスキャンを一時停止しました。", "#3498db");
     });
 
     function updateStatus(text, color) {
@@ -88,35 +100,61 @@
 
         if (code) {
           const scannedText = code.data.trim();
-          isScanning = false;
+          
+          // 【対策1】読み取った値が空、または空白のみのパターンの排除
+          if (scannedText === "") {
+            requestAnimationFrame(tick);
+            return;
+          }
+
+          // 【対策2】直前に読んだ番号と同じであれば無視してスキャン継続（残像・連続防止）
+          if (scannedText === lastScannedId) {
+            requestAnimationFrame(tick);
+            return;
+          }
+
+          // 新しい番号を検知した場合のみ処理を進める
+          lastScannedId = scannedText; 
+          playSound("read");
           executeSubmit(scannedText);
-          return;
+          
+          // 連続スキャン用に、1.5秒だけインターバルを置いて自動で判定ループを再開
+          setTimeout(() => {
+            if (isScanning) {
+              updateStatus(`【スキャン待機中】\n直前通過: [${scannedText}]\n次の端末をかざしてください。`, "#e67e22");
+              tick();
+            }
+          }, 1500);
+          return; 
         }
       }
       requestAnimationFrame(tick);
     }
 
     async function executeSubmit(deviceId) {
-      updateStatus("⏳ データを送信中...", "#7f8c8d");
+      updateStatus(`⏳ 送信中... [端末: ${deviceId}]`, "#7f8c8d");
 
       const formData = new FormData();
       formData.append(ENTRY_ID, deviceId);
 
       try {
-        // 実績のある「no-cors」でのフォーム直接送信方式
         await fetch(FORM_URL, { method: "POST", mode: "no-cors", body: formData });
-        
-        updateStatus(`✅ 送信完了！\n端末番号: [${deviceId}] を記録しました。`, "#2ecc71");
-        
-        // 2秒後に自動でスキャン待機状態に戻す
-        setTimeout(() => {
-          actionBtn.disabled = false;
-          updateStatus("【待機中】\n次の端末をスキャンする場合は、再度ボタンを押してください。", "#3498db");
-        }, 2000);
-
+        updateStatus(`✅ 送信成功!\n端末番号: [${deviceId}] をフォームへ送りました。`, "#2ecc71");
       } catch (e) {
-        updateStatus("❌ 送信失敗: " + e.message, "red");
-        actionBtn.disabled = false;
+        console.error(e);
+      }
+    }
+
+    function playSound(type) {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      if (type === "read") {
+        gain.gain.value = 0.2; osc.frequency.value = 1000; osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.08);
+        osc.stop(audioCtx.currentTime + 0.08);
       }
     }
   </script>
