@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>端末チェックアプリ</title>
+    <title>端末チェック用アプリ</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: sans-serif; text-align: center; margin: 20px; }
@@ -18,42 +18,42 @@
     <div id="result"></div>
 
     <script>
-        // 100%確実に届く、公開フォーム用の送信先URLとEntry IDの組み合わせです
-const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScoqBmjrIcKwnfYjBYeio6tyoCKkdm7gQD_qT_oa0TQ55bhlA/formResponse";
-const ENTRY_ID = "entry.860082584";
+        // 確定した正しいURLと項目ID
+        const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScoqBmjrIcKwnfYjBYeio6tyoCKkdm7gQD_qT_oa0TQ55bhlA/formResponse";
+        const ENTRY_ID = "entry.860082584";
 
-function onScanSuccess(decodedText, decodedResult) {
-    document.getElementById('result').innerText = `スキャン中: ${decodedText}`;
-    
-    // 隠しフォームを生成して送信（CORS対策・確実性重視）
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = FORM_URL;
-    form.target = 'hidden_iframe';
+        function onScanSuccess(decodedText, decodedResult) {
+            document.getElementById('result').innerText = `スキャン中: ${decodedText}`;
+            
+            // 最もシンプルで実績のある Fetch (no-cors) 送信
+            const params = new URLSearchParams();
+            params.append(ENTRY_ID, decodedText);
 
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = ENTRY_ID;
-    input.value = decodedText;
+            fetch(FORM_URL, {
+                method: "POST",
+                body: params,
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                mode: "no-cors"
+            })
+            .then(() => {
+                document.getElementById('result').innerText = `送信完了: 端末番号 ${decodedText}`;
+            })
+            .catch(err => {
+                console.error(err);
+                document.getElementById('result').innerText = "エラーが発生しました";
+            });
+        }
 
-    form.appendChild(input);
-    document.body.appendChild(form);
-    
-    let iframe = document.getElementById('hidden_iframe');
-    if (!iframe) {
-        iframe = document.createElement('iframe');
-        iframe.id = 'hidden_iframe';
-        iframe.name = 'hidden_iframe';
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-    }
+        function onScanFailure(error) {
+            // スキャン失敗時は何も出力しない（負荷軽減）
+        }
 
-    form.submit();
-    document.body.removeChild(form);
-
-    document.getElementById('result').innerText = `送信完了: 端末番号 ${decodedText}`;
-    alert(`端末番号: ${decodedText} を送信しました。`);
-}
+        // カメラの初期化と起動
+        let html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
     </script>
 </body>
 </html>
