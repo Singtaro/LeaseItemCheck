@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>端末チェック用アプリ（カメラ切り替え版）</title>
+  <title>端末チェック用アプリ（カメラ切り替え修正版）</title>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     body { font-family: sans-serif; text-align: center; margin: 20px; background-color: #f4f6f7; color: #2c3e50; }
@@ -11,7 +11,6 @@
     #video-container { position: relative; width: 100%; max-width: 400px; margin: 0 auto; background: #000; border-radius: 6px; overflow: hidden; aspect-ratio: 4/3; }
     video { width: 100%; height: 100%; object-fit: cover; }
     
-    /* カメラ切り替えボタンのスタイル（既存システムの配置を踏襲） */
     #camera-switch-btn {
       position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; 
       border-radius: 50%; background: rgba(255,255,255,0.8); border: none; 
@@ -60,11 +59,10 @@
     
     let isScanning = false;
     let lastScannedId = "";
-    let currentFacingMode = "environment"; // デフォルトは外カメラ
+    let currentFacingMode = "environment"; 
     let currentStream = null;
 
     window.onload = () => { 
-      // 記憶されたカメラの向きがあれば取得
       const savedCamera = localStorage.getItem('checkAppCameraFacing');
       if (savedCamera) {
         currentFacingMode = savedCamera;
@@ -72,13 +70,24 @@
       startCamera(currentFacingMode); 
     };
 
-    function startCamera(facingMode) {
-      // 既存のストリームがあれば安全に停止
+    // カメラ起動処理を async/await で確実化
+    async function startCamera(facingMode) {
+      // 1. 既存ストリームの完全停止
       if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+        video.srcObject = null;
+        // デバイスの解放待ちとして100ms休憩を入れる（重要）
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode }, audio: false })
+      // 2. 新しいカメラの要求（ideal制約を使用）
+      const constraints = {
+        video: { facingMode: { ideal: facingMode } },
+        audio: false
+      };
+
+      navigator.mediaDevices.getUserMedia(constraints)
       .then(stream => { 
         currentStream = stream;
         video.srcObject = stream; 
@@ -87,17 +96,20 @@
         }
       })
       .catch(err => { 
-        updateStatus("❌ カメラエラー: 権限を許可してください。", "red"); 
+        console.error(err);
+        updateStatus("❌ カメラ起動エラー: 再度お試しください。", "red"); 
       });
     }
 
     // 切り替えボタンのイベント
-    cameraSwitchBtn.addEventListener('click', () => {
+    cameraSwitchBtn.addEventListener('click', async () => {
       currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
       localStorage.setItem('checkAppCameraFacing', currentFacingMode);
       
-      // カメラを再起動（スキャン中ならそのままループを継続できるようにストリームだけ切り替える）
-      startCamera(currentFacingMode);
+      // ボタンを一瞬無効化して連打を防ぐ
+      cameraSwitchBtn.disabled = true;
+      await startCamera(currentFacingMode);
+      cameraSwitchBtn.disabled = false;
     });
 
     actionBtn.addEventListener('click', () => {
